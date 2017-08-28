@@ -1,21 +1,67 @@
-﻿#This Sample Code is provided for the purpose of illustration only and is not intended to be used in a production environment.
-#THIS SAMPLE CODE AND ANY RELATED INFORMATION ARE PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESSED OR IMPLIED,
-#INCLUDING BUT NOT LIMITED TO THE IMPLIED WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A PARTICULAR PURPOSE.
-#We grant you a nonexclusive, royalty-free right to use and modify the Sample Code and to reproduce and distribute
-#the object code form of the Sample Code, provided that you agree:
-#(i) to not use Our name, logo, or trademarks to market Your software product in which the Sample Code is embedded;
-#(ii) to include a valid copyright notice on Your software product in which the Sample Code is embedded; and
-#(iii) to indemnify, hold harmless, and defend Us and our suppliers from and against any claims or lawsuits, 
-#      including attorneys' fees, that arise or result from the use or distribution of the Sample Code.
-#
-# Developed By: Mohit K. Gupta (mogupta@microsoft.com)
-# Last Updated: May 4, 2017
-#      Version: 3.0
+﻿<# 
+.Synopsis
+This script allows for DBA to manage the service account for SQL Services.
+
+.Description
+This solution provides the ability to manage service accounts for SQL Server Services.  The solution
+allows you to update the password or change the service account.
+
+This script can be called with following parameter combinations:
+ComputerName, ServiceAccountName, ServiceAccountOldPassword, ServiceAccountNewPassword
+ComputerName, ServiceAccountName, NewServiceAccountName, ServiceAccountNewPassword
+
+If NewServiceAccountName and ServiceAccountOldPassword both are supplied then it is assumed service
+account change is required and ServiceAccountOldPassword is ignored.
+
+.Parameter ComputerName
+Server name where SQL Server services are installed for which you wish to change the password.
+
+.Parameter ServiceAccountName
+Current service account assigned to the services.  The script finds the services based on this service
+account.
+
+.Parameter NewServiceAccountName
+If you wish to change existing service account, you must supply ServiceAccountName and the
+NewServiceAccountName name with ServiceAccountNewPassword.
+
+.Parameter ServiceAccountOldPassword
+Required to change the existing password from current to new password.
+
+.Parameter ServiceAccountNewPassword
+Required to change the existing password to new password or to change existing service account to
+new service account.
+
+.Example 
+.\ChangeServiceAccountPassword_v3.ps1 -ComputerName Contoso -ServiceAccountName Contoso\SQLSvc -ServiceAccountOldPassword Password123 -ServiceAccountNewPassword P@ssword123
+Change the service account for all SQL Services that have account Contoso\SQLSvc.
+
+.Example
+.\ChangeServiceAccountPassword_v3.ps1 -ComputerName Contoso -ServiceAccountName Contoso\SQLSvc -ServiceAccountOldPassword Password123 -ServiceAccountNewPassword P@ssword123 -WhatIf
+What services will be affected if we change the password for service acocunt.
+
+.Example
+.\ChangeServiceAccountPassword_v3.ps1 -ComputerName Contoso -ServiceAccountName Contoso\SQLSvc -ServiceAccountOldPassword Password123 -ServiceAccountNewPassword P@ssword123 -Verbose
+Change the service account for all SQL Services that have account Contoso\SQLSvc providing verbose output.
+
+.Example 
+.\ChangeServiceAccountPassword_v3.ps1 -ComputerName Contoso -ServiceAccountName Contoso\SQLSvc -NewServiceAccountName Contoso\SQLSvcNew -ServiceAccountNewPassword P@ssword123
+Change the SQL Service account from current to new account.
+
+.Link 
+https://github.com/sqlcan/SQLSvcAcctMgmt/
+http://sqlcan.com/
+
+.Notes
+Date         Version     Author      Comments
+------------ ----------- ----------- ----------------------------------------------------------------
+2017.08.28   3.10.0000   mogupta     Adding functionality to handle service account changes.
+#> 
 
 param
 (
     [Parameter(Mandatory=$true,ValueFromPipeline=$true)] [String] $ComputerName,
     [Parameter(Mandatory=$true)] [String] $ServiceAccountName,
+    [Parameter(Mandatory=$false)] [String] $NewServiceAccountName,
     [Parameter(Mandatory=$false)] [String] $ServiceAccountOldPassword,
     [Parameter(Mandatory=$false)] [String] $ServiceAccountNewPassword,
     [Parameter(Mandatory=$false)] [Switch] $WhatIf
@@ -41,13 +87,29 @@ BEGIN
         $SvcObj | Add-Member -MemberType NoteProperty -Name OperationStatus -Value "Unknown"
 
         return $SvcObj
+    }    
+    
+    if ($NewServiceAccountName -eq '')
+    {
+        Write-Verbose "$(Get-Date) Updating SQL Server Services' Service Accounts' Passwords"
+    }
+    else
+    {
+        Write-Verbose "$(Get-Date) Updating SQL Server Services' Service Account"
     }
 
-    Write-Verbose "$(Get-Date) Updating SQL Server Services' Service Accounts' Passwords"
-    
-    if (!($WhatIf) -and  (($ServiceAccountOldPassword -eq '') -or ($ServiceAccountNewPassword -eq '')))
+    if (!($WhatIf))
     {
-        Write-Error "Must supply both ServiceAccountOldPassword and ServiceAccountNewPassword."
+        # If NewServiceAccountName is not supplied assumed that it is password change request.
+        # Therefore, user must supply both old and new service account password.
+        if (($NewServiceAccountName -eq '') -and (($ServiceAccountOldPassword -eq '') -or ($ServiceAccountNewPassword -eq '')))
+        {
+            Write-Error "Must supply both ServiceAccountOldPassword and ServiceAccountNewPassword."
+        }                
+        elseif (($NewServiceAccountName -ne '') -and ($ServiceAccountNewPassword -eq ''))
+        {
+            Write-Error "Must supply both ServiceAccountNewPassword when NewServiceAccountName is supplied."
+        }
     }
 
 }
@@ -131,19 +193,42 @@ PROCESS
             {
                 if (!($WhatIf))
                 {
-                    Write-Verbose "$(Get-Date) Changing Password on Target \\$($SQLService.ComputerName)\$($SQLService.ServiceName) via Method ChangePassword (SQLSMO)"
-                    $Service.ChangePassword($ServiceAccountOldPassword, $ServiceAccountNewPassword)
-                    $SQLService.OperationStatus = "Password Change Completed"
+                    if ($NewServiceAccountName -ne '')
+                    {
+                        Write-Verbose "$(Get-Date) Changing Service Account on Target \\$($SQLService.ComputerName)\$($SQLService.ServiceName) via Method ChangePassword (SQLSMO) *Service Restarted*"
+                        $Service.SetServiceAccount($NewServiceAccountName, $ServiceAccountNewPassword)
+                        $SQLService.OperationStatus = "Service Account Changed"
+                    }
+                    else
+                    {
+                        Write-Verbose "$(Get-Date) Changing Password on Target \\$($SQLService.ComputerName)\$($SQLService.ServiceName) via Method ChangePassword (SQLSMO)"
+                        $Service.ChangePassword($ServiceAccountOldPassword, $ServiceAccountNewPassword)
+                        $SQLService.OperationStatus = "Password Change Completed"
+                    }
                 }
                 else
                 {
-                    Write-Verbose "$(Get-Date) What if: Changing Password on Target \\$($SQLService.ComputerName)\$($SQLService.ServiceName)"
+                    if ($NewServiceAccountName -ne '')
+                    {
+                        Write-Verbose "$(Get-Date) What if: Changing Service Account on Target \\$($SQLService.ComputerName)\$($SQLService.ServiceName) via Method ChangePassword (SQLSMO) *Restart Required*"                        
+                    }
+                    else
+                    {
+                        Write-Verbose "$(Get-Date) What if: Changing Password on Target \\$($SQLService.ComputerName)\$($SQLService.ServiceName) via Method ChangePassword (SQLSMO)"                        
+                    }
                     $SQLService.OperationStatus = "Dry Run"
                 }
             }
             catch
             {
-                $SQLService.OperationStatus = "Password Change Failed"
+                if ($NewServiceAccountName -ne '')
+                {
+                    $SQLService.OperationStatus = "Service Account Change Failed"
+                }
+                else
+                {
+                    $SQLService.OperationStatus = "Password Change Failed"
+                }
                 Write-Verbose "$(Get-Date) Changing Password on Target \\$($SQLService.ComputerName)\$($SQLService.ServiceName) Failed!"
                 Write-Verbose "$(Get-Date) Exception Type: $($_.Exception.GetType().FullName)”
                 Write-Verbose "$(Get-Date) Exception Message: $($_.Exception.Message)”
@@ -168,22 +253,46 @@ PROCESS
             {
                 if (!($WhatIf))
                 {
-                    Write-Verbose "$(Get-Date) Changing Password on Target \\$($SQLService.ComputerName)\$($SQLService.ServiceName) via Method Change (Win32_Service)"
-                    $WMIServices = Get-WmiObject -Class Win32_Service -ComputerName $ComputerName
-                    $SQLSvc = $WMIServices | ? {$_.Name -Like "$($SQLService.ServiceName)"}
-                    $Results = $SQLSvc.change($null,$null,$null,$null,$null,$null,$null,$ServiceAccountNewPassword,$null,$null)
-                    $SQLService.OperationStatus = "Password Change Completed"
-
+                    if ($NewServiceAccountName -ne '')
+                    {
+                        Write-Verbose "$(Get-Date) Changing Service Account on Target \\$($SQLService.ComputerName)\$($SQLService.ServiceName) via Method Change (Win32_Service)"
+                        $WMIServices = Get-WmiObject -Class Win32_Service -ComputerName $ComputerName
+                        $SQLSvc = $WMIServices | ? {$_.Name -Like "$($SQLService.ServiceName)"}
+                        $Results = $SQLSvc.change($null,$null,$null,$null,$null,$null,$NewServiceAccountName,$ServiceAccountNewPassword,$null,$null)
+                        $SQLService.OperationStatus = "Service Account Completed"
+                    }
+                    else
+                    {
+                        Write-Verbose "$(Get-Date) Changing Password on Target \\$($SQLService.ComputerName)\$($SQLService.ServiceName) via Method Change (Win32_Service)"
+                        $WMIServices = Get-WmiObject -Class Win32_Service -ComputerName $ComputerName
+                        $SQLSvc = $WMIServices | ? {$_.Name -Like "$($SQLService.ServiceName)"}
+                        $Results = $SQLSvc.change($null,$null,$null,$null,$null,$null,$null,$ServiceAccountNewPassword,$null,$null)
+                        $SQLService.OperationStatus = "Password Change Completed"
+                    }
                 }
                 else
                 {
-                    Write-Verbose "$(Get-Date) What if: Changing Password on Target \\$($SQLService.ComputerName)\$($SQLService.ServiceName)"
+                    if ($NewServiceAccountName -ne '')
+                    {
+                        Write-Verbose "$(Get-Date) What if: Changing Service Account on Target \\$($SQLService.ComputerName)\$($SQLService.ServiceName) via Method Change (Win32_Service)"                        
+                    }
+                    else
+                    {
+                        Write-Verbose "$(Get-Date) What if: Changing Password on Target \\$($SQLService.ComputerName)\$($SQLService.ServiceName) via Method Change (Win32_Service)"                        
+                    }
                     $SQLService.OperationStatus = "Dry Run"
                 }
             }
             catch
             {
-                $SQLService.OperationStatus = "Password Change Failed"
+                if ($NewServiceAccountName -ne '')
+                {
+                    $SQLService.OperationStatus = "Service Account Change Failed"
+                }
+                else
+                {
+                    $SQLService.OperationStatus = "Password Change Failed"
+                }                
                 Write-Verbose "$(Get-Date) Changing Password on Target \\$($SQLService.ComputerName)\$($SQLService.ServiceName) Failed!"
                 Write-Verbose "$(Get-Date) Exception Type: $($_.Exception.GetType().FullName)”
                 Write-Verbose "$(Get-Date) Exception Message: $($_.Exception.Message)”
