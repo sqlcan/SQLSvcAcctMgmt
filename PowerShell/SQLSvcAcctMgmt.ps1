@@ -24,6 +24,10 @@ account.
 If you wish to change existing service account, you must supply ServiceAccountName and the
 NewServiceAccountName name with ServiceAccountNewPassword.
 
+.Parameter ServiceType
+Specify the SQL Service you wish to update the password or service account for; current supported are:
+All, SqlServer, SqlAgent, and AnalysisServer.
+
 .Parameter ServiceAccountOldPassword
 Required to change the existing password from current to new password.
 
@@ -32,19 +36,19 @@ Required to change the existing password to new password or to change existing s
 new service account.
 
 .Example 
-.\ChangeServiceAccountPassword_v3.ps1 -ComputerName Contoso -ServiceAccountName Contoso\SQLSvc -ServiceAccountOldPassword Password123 -ServiceAccountNewPassword P@ssword123
+.\SQLSvcAcctMgmt.ps1 -ComputerName Contoso -ServiceAccountName Contoso\SQLSvc -ServiceAccountOldPassword Password123 -ServiceAccountNewPassword P@ssword123
 Change the service account for all SQL Services that have account Contoso\SQLSvc.
 
 .Example
-.\ChangeServiceAccountPassword_v3.ps1 -ComputerName Contoso -ServiceAccountName Contoso\SQLSvc -ServiceAccountOldPassword Password123 -ServiceAccountNewPassword P@ssword123 -WhatIf
+.\SQLSvcAcctMgmt.ps1 -ComputerName Contoso -ServiceAccountName Contoso\SQLSvc -ServiceAccountOldPassword Password123 -ServiceAccountNewPassword P@ssword123 -WhatIf
 What services will be affected if we change the password for service acocunt.
 
 .Example
-.\ChangeServiceAccountPassword_v3.ps1 -ComputerName Contoso -ServiceAccountName Contoso\SQLSvc -ServiceAccountOldPassword Password123 -ServiceAccountNewPassword P@ssword123 -Verbose
+.\SQLSvcAcctMgmt.ps1 -ComputerName Contoso -ServiceAccountName Contoso\SQLSvc -ServiceAccountOldPassword Password123 -ServiceAccountNewPassword P@ssword123 -Verbose
 Change the service account for all SQL Services that have account Contoso\SQLSvc providing verbose output.
 
 .Example 
-.\ChangeServiceAccountPassword_v3.ps1 -ComputerName Contoso -ServiceAccountName Contoso\SQLSvc -NewServiceAccountName Contoso\SQLSvcNew -ServiceAccountNewPassword P@ssword123
+.\SQLSvcAcctMgmt.ps1 -ComputerName Contoso -ServiceAccountName Contoso\SQLSvc -NewServiceAccountName Contoso\SQLSvcNew -ServiceAccountNewPassword P@ssword123
 Change the SQL Service account from current to new account.
 
 .Link 
@@ -55,12 +59,14 @@ http://sqlcan.com/
 Date         Version     Author      Comments
 ------------ ----------- ----------- ----------------------------------------------------------------
 2017.08.28   3.10.0000   mogupta     Adding functionality to handle service account changes.
+2017.08.30   3.20.0000   mogupta     Added ability to handle service type.
 #> 
 
 param
 (
     [Parameter(Mandatory=$true,ValueFromPipeline=$true)] [String] $ComputerName,
     [Parameter(Mandatory=$true)] [String] $ServiceAccountName,
+    [Parameter(Mandatory=$false)] [String] $ServiceType = 'All',
     [Parameter(Mandatory=$false)] [String] $NewServiceAccountName,
     [Parameter(Mandatory=$false)] [String] $ServiceAccountOldPassword,
     [Parameter(Mandatory=$false)] [String] $ServiceAccountNewPassword,
@@ -82,6 +88,7 @@ BEGIN
         $SvcObj | Add-Member -MemberType NoteProperty -Name ComputerName -Value "Unknown"
         $SvcObj | Add-Member -MemberType NoteProperty -Name OperatingSystem -Value "Unknown"
         $SvcObj | Add-Member -MemberType NoteProperty -Name ServiceName -Value "Unknown"
+        $SvcObj | Add-Member -MemberType NoteProperty -Name ServiceType -Value "Unknown"
         $SvcObj | Add-Member -MemberType NoteProperty -Name ServiceMode -Value "Unknown"
         $SvcObj | Add-Member -MemberType NoteProperty -Name ServiceState -Value "Unknown"        
         $SvcObj | Add-Member -MemberType NoteProperty -Name OperationStatus -Value "Unknown"
@@ -159,8 +166,16 @@ PROCESS
         #$SMOWmiserver.Services | Select name, type, ServiceAccount, DisplayName, Properties, StartMode, StartupParameters | Format-Table
         #($SMOWmiserver.Services) | GM
 
-        #Only target services that have service account name set to passed in parameters.        
-        $FilteredServices = $SMOWmiserver.Services | Where {$_.ServiceAccount -eq $ServiceAccountName}
+        if ($ServiceType -eq 'All')
+        {
+            #Only target services that have service account name set to passed in parameters.        
+            $FilteredServices = $SMOWmiserver.Services | Where {$_.ServiceAccount -eq $ServiceAccountName}
+        }
+        else
+        {
+            #Only target services that have service account name set to passed in parameters.        
+            $FilteredServices = $SMOWmiserver.Services | Where {$_.ServiceAccount -eq $ServiceAccountName -and $_.Type -eq $ServiceType }
+        }
     }
     catch
     {
@@ -185,6 +200,7 @@ PROCESS
 
         $SQLService.ServiceMode = $Service.StartMode
         $SQLService.ServiceName = $Service.Name
+        $SQLService.ServiceType = $Service.Type
         $SQLService.ServiceState = $Service.ServiceState
 
         if (($Service.StartMode -eq 'Auto') -or (($Service.StartMode -eq 'Manual') -and ($Service.ServiceState -eq 'Running')))
@@ -211,12 +227,13 @@ PROCESS
                     if ($NewServiceAccountName -ne '')
                     {
                         Write-Verbose "$(Get-Date) What if: Changing Service Account on Target \\$($SQLService.ComputerName)\$($SQLService.ServiceName) via Method ChangePassword (SQLSMO) *Restart Required*"                        
+                        $SQLService.OperationStatus = "Dry Run - Service Account Change"
                     }
                     else
                     {
                         Write-Verbose "$(Get-Date) What if: Changing Password on Target \\$($SQLService.ComputerName)\$($SQLService.ServiceName) via Method ChangePassword (SQLSMO)"                        
-                    }
-                    $SQLService.OperationStatus = "Dry Run"
+                        $SQLService.OperationStatus = "Dry Run - Password Change"
+                    }                    
                 }
             }
             catch
