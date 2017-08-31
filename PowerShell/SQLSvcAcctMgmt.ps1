@@ -213,7 +213,7 @@ PROCESS
                     {
                         Write-Verbose "$(Get-Date) Changing Service Account on Target \\$($SQLService.ComputerName)\$($SQLService.ServiceName) via Method ChangePassword (SQLSMO) *Service Restarted*"
                         $Service.SetServiceAccount($NewServiceAccountName, $ServiceAccountNewPassword)
-                        $SQLService.OperationStatus = "Service Account Changed"
+                        $SQLService.OperationStatus = "Service Account Updated"
                     }
                     else
                     {
@@ -276,7 +276,7 @@ PROCESS
                         $WMIServices = Get-WmiObject -Class Win32_Service -ComputerName $ComputerName
                         $SQLSvc = $WMIServices | ? {$_.Name -Like "$($SQLService.ServiceName)"}
                         $Results = $SQLSvc.change($null,$null,$null,$null,$null,$null,$NewServiceAccountName,$ServiceAccountNewPassword,$null,$null)
-                        $SQLService.OperationStatus = "Service Account Completed"
+                        $SQLService.OperationStatus = "Service Account Updated"
                     }
                     else
                     {
